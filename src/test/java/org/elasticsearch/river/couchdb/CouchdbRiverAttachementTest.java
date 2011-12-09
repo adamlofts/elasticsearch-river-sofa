@@ -59,7 +59,7 @@ public class CouchdbRiverAttachementTest {
 
         XContentBuilder xb = jsonBuilder()
                 .startObject()
-                .field("type", "couchdb")
+                .field("type", "sofa")
                 .startObject("couchdb")
                 .field("host", host)
                 .field("port", port)

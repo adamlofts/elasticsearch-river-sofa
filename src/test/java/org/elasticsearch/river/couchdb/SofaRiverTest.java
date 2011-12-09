@@ -28,12 +28,12 @@ import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 /**
  *
  */
-public class CouchdbRiverTest {
+public class SofaRiverTest {
 
     public static void main(String[] args) throws Exception {
         Node node = NodeBuilder.nodeBuilder().settings(ImmutableSettings.settingsBuilder().put("gateway.type", "local")).node();
         Thread.sleep(1000);
-        node.client().prepareIndex("_river", "db", "_meta").setSource(jsonBuilder().startObject().field("type", "couchdb").endObject()).execute().actionGet();
+        node.client().prepareIndex("_river", "db", "_meta").setSource(jsonBuilder().startObject().field("type", "sofa").endObject()).execute().actionGet();
 
         Thread.sleep(1000000);
     }

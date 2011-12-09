@@ -25,10 +25,10 @@ import org.elasticsearch.river.River;
 /**
  *
  */
-public class CouchdbRiverModule extends AbstractModule {
+public class SofaRiverModule extends AbstractModule {
 
     @Override
     protected void configure() {
-        bind(River.class).to(CouchdbRiver.class).asEagerSingleton();
+        bind(River.class).to(SofaRiver.class).asEagerSingleton();
     }
 }

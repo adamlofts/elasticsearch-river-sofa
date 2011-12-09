@@ -61,7 +61,7 @@ import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 /**
  *
  */
-public class CouchdbRiver extends AbstractRiverComponent implements River {
+public class SofaRiver extends AbstractRiverComponent implements River {
 
     private final Client client;
 
@@ -93,7 +93,7 @@ public class CouchdbRiver extends AbstractRiverComponent implements River {
 
     @SuppressWarnings({"unchecked"})
     @Inject
-    public CouchdbRiver(RiverName riverName, RiverSettings settings, @RiverIndexName String riverIndexName, Client client, ScriptService scriptService) {
+    public SofaRiver(RiverName riverName, RiverSettings settings, @RiverIndexName String riverIndexName, Client client, ScriptService scriptService) {
         super(riverName, settings);
         this.riverIndexName = riverIndexName;
         this.client = client;

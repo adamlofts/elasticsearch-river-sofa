@@ -23,32 +23,32 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Module;
 import org.elasticsearch.plugins.AbstractPlugin;
 import org.elasticsearch.river.RiversModule;
-import org.elasticsearch.river.couchdb.CouchdbRiverModule;
+import org.elasticsearch.river.couchdb.SofaRiverModule;
 
 /**
  *
  */
-public class CouchdbRiverPlugin extends AbstractPlugin {
+public class SofaRiverPlugin extends AbstractPlugin {
 
     @Inject
-    public CouchdbRiverPlugin() {
+    public SofaRiverPlugin() {
     }
 
     @Override
     public String name() {
-        return "river-couchdb";
+        return "river-couchdb-sofa";
     }
 
     @Override
     public String description() {
-        return "River CouchDB Plugin";
+        return "Sofa CouchDB Indexer Plugin";
     }
 
 
     @Override
     public void processModule(Module module) {
         if (module instanceof RiversModule) {
-            ((RiversModule) module).registerRiver("couchdb", CouchdbRiverModule.class);
+            ((RiversModule) module).registerRiver("sofa", SofaRiverModule.class);
         }
     }
 }
