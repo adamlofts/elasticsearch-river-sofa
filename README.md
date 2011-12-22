@@ -1,15 +1,44 @@
-CouchDB River Plugin for ElasticSearch
+Sofa River Plugin for ElasticSearch
 ==================================
 
-The CouchDB River plugin allows to hook into couchdb `_chages` feed and automatically index it into elasticsearch.
+The Sofa River plugin allows indexing of many CouchDB databases into an ElasticSearch index.
+
+Motivation
+----------
+
+The Sofa river takes a different strategy from the CouchDB river. You specify a regular expression of database names `db_filter` in the configuration and all documents in matching databases are indexed. This means new databases will be automatically indexed as created without manually creating a new river.
+
+Implementation
+--------------
+
+The Sofa river polls the CouchDB `_all_dbs` endpoint and then loops through all the databases. This is not an efficient way to monitor changes. Because of this the river will exponentially back off if no changes are detected. You can use the `backoff_min` and `backoff_max` parameters to configure the balance between resource intensivity and index latency.
+
+Installation
+------------
+
+FIXME
 
 In order to install the plugin, simply run: `bin/plugin -install elasticsearch/elasticsearch-river-couchdb/1.0.0`.
 
-    ---------------------------------------
-    | memcached Plugin | ElasticSearch    |
-    ---------------------------------------
-    | master           | 0.18 -> master   |
-    ---------------------------------------
-    | 1.0.0            | 0.18 -> master   |
-    ---------------------------------------
+Configuration
+-------------
+
+The following will index all CouchDB databases prefixed with `test` into the `my_es_index` index with doc type `my_es_type`.
+
+    curl -XPUT 'localhost:9200/_river/my_db/_meta' -d '{
+        "type" : "couchdb-sofa",
+        "couchdb" : {
+            "host" : "localhost",
+            "port" : 5984,
+            "db_filter" : "test.*"
+        },
+        "index" : {
+            "index" : "my_es_index",
+            "type" : "my_es_type",
+    
+            "bulk_size: "10",
+            "backoff_min" : 1000,
+            "backoff_max" : 60000
+        }
+    }'
 
