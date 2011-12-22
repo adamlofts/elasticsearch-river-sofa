@@ -36,7 +36,7 @@ public class SofaRiverPlugin extends AbstractPlugin {
 
     @Override
     public String name() {
-        return "river-couchdb-sofa";
+        return "river-sofa";
     }
 
     @Override
