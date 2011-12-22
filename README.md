@@ -23,18 +23,18 @@ Configuration
 
 The following will index all CouchDB databases prefixed with `test` into the `my_es_index` index with doc type `my_es_type`.
 
-    curl -XPUT 'localhost:9200/_river/my_db/_meta' -d '{
-        "type" : "couchdb-sofa",
+    curl -XPUT 'localhost:9200/_river/river1/_meta' -d '{
+        "type" : "sofa",
         "couchdb" : {
             "host" : "localhost",
             "port" : 5984,
             "db_filter" : "test.*"
         },
         "index" : {
-            "index" : "my_es_index",
-            "type" : "my_es_type",
+            "index" : "index1",
+            "type" : "test1",
     
-            "bulk_size: "10",
+            "bulk_size": 10,
             "backoff_min" : 1000,
             "backoff_max" : 60000
         }
