@@ -20,6 +20,7 @@
 package org.elasticsearch.river.couchdb;
 
 import org.elasticsearch.ExceptionsHelper;
+import org.elasticsearch.action.NoShardAvailableActionException;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.client.Client;
@@ -28,31 +29,22 @@ import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.common.Base64;
 import org.elasticsearch.common.collect.Maps;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.io.Closeables;
-import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
-import org.elasticsearch.common.util.concurrent.jsr166y.LinkedTransferQueue;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.common.xcontent.support.XContentMapValues;
 import org.elasticsearch.indices.IndexAlreadyExistsException;
+import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.river.*;
 import org.elasticsearch.script.ExecutableScript;
 import org.elasticsearch.script.ScriptService;
 
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLSession;
 import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.net.URLEncoder;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.TimeUnit;
+import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.elasticsearch.client.Requests.deleteRequest;
 import static org.elasticsearch.client.Requests.indexRequest;
@@ -63,6 +55,12 @@ import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
  */
 public class SofaRiver extends AbstractRiverComponent implements River {
 
+	private final String DEFAULT_INDEX_NAME = "sofa_db";
+	private final String DEFAULT_TYPE_NAME = "sofa";
+	
+	private final int DEFAULT_BACKOFF_MIN = 1000;
+	private final int DEFAULT_BACKOFF_MAX = 60000;
+	
     private final Client client;
 
     private final String riverIndexName;
@@ -70,9 +68,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
     private final String couchProtocol;
     private final String couchHost;
     private final int couchPort;
-    private final String couchDb;
-    private final String couchFilter;
-    private final String couchFilterParamsUrl;
+    private final Pattern couchDbFilter;
     private final String basicAuth;
     private final boolean noVerify;
     private final boolean couchIgnoreAttachments;
@@ -80,16 +76,16 @@ public class SofaRiver extends AbstractRiverComponent implements River {
     private final String indexName;
     private final String typeName;
     private final int bulkSize;
-    private final TimeValue bulkTimeout;
-    private final int throttleSize;
+    
+    private final int backoffMin;
+    private final int backoffMax;
+    
+    private int backoff;
 
     private final ExecutableScript script;
 
     private volatile Thread slurperThread;
-    private volatile Thread indexerThread;
     private volatile boolean closed;
-
-    private final BlockingQueue<String> stream;
 
     @SuppressWarnings({"unchecked"})
     @Inject
@@ -104,22 +100,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             noVerify = XContentMapValues.nodeBooleanValue(couchSettings.get("no_verify"), false);
             couchHost = XContentMapValues.nodeStringValue(couchSettings.get("host"), "localhost");
             couchPort = XContentMapValues.nodeIntegerValue(couchSettings.get("port"), 5984);
-            couchDb = XContentMapValues.nodeStringValue(couchSettings.get("db"), riverName.name());
-            couchFilter = XContentMapValues.nodeStringValue(couchSettings.get("filter"), null);
-            if (couchSettings.containsKey("filter_params")) {
-                Map<String, Object> filterParams = (Map<String, Object>) couchSettings.get("filter_params");
-                StringBuilder sb = new StringBuilder();
-                for (Map.Entry<String, Object> entry : filterParams.entrySet()) {
-                    try {
-                        sb.append("&").append(URLEncoder.encode(entry.getKey(), "UTF-8")).append("=").append(URLEncoder.encode(entry.getValue().toString(), "UTF-8"));
-                    } catch (UnsupportedEncodingException e) {
-                        // should not happen...
-                    }
-                }
-                couchFilterParamsUrl = sb.toString();
-            } else {
-                couchFilterParamsUrl = null;
-            }
+            
             couchIgnoreAttachments = XContentMapValues.nodeBooleanValue(couchSettings.get("ignore_attachments"), false);
             if (couchSettings.containsKey("user") && couchSettings.containsKey("password")) {
                 String user = couchSettings.get("user").toString();
@@ -134,13 +115,18 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             } else {
                 script = null;
             }
+            
+            String couchDbFilterValue = XContentMapValues.nodeStringValue(couchSettings.get("db_filter"), null);
+            if (couchDbFilterValue != null) {
+            	couchDbFilter = Pattern.compile(couchDbFilterValue);
+            } else {
+            	couchDbFilter = null;
+            }
         } else {
             couchProtocol = "http";
             couchHost = "localhost";
             couchPort = 5984;
-            couchDb = "db";
-            couchFilter = null;
-            couchFilterParamsUrl = null;
+            couchDbFilter = null;
             couchIgnoreAttachments = false;
             noVerify = false;
             basicAuth = null;
@@ -149,32 +135,27 @@ public class SofaRiver extends AbstractRiverComponent implements River {
 
         if (settings.settings().containsKey("index")) {
             Map<String, Object> indexSettings = (Map<String, Object>) settings.settings().get("index");
-            indexName = XContentMapValues.nodeStringValue(indexSettings.get("index"), couchDb);
-            typeName = XContentMapValues.nodeStringValue(indexSettings.get("type"), couchDb);
+            indexName = XContentMapValues.nodeStringValue(indexSettings.get("index"), DEFAULT_INDEX_NAME);
+            typeName = XContentMapValues.nodeStringValue(indexSettings.get("type"), DEFAULT_TYPE_NAME);
             bulkSize = XContentMapValues.nodeIntegerValue(indexSettings.get("bulk_size"), 100);
-            if (indexSettings.containsKey("bulk_timeout")) {
-                bulkTimeout = TimeValue.parseTimeValue(XContentMapValues.nodeStringValue(indexSettings.get("bulk_timeout"), "10ms"), TimeValue.timeValueMillis(10));
-            } else {
-                bulkTimeout = TimeValue.timeValueMillis(10);
-            }
-            throttleSize = XContentMapValues.nodeIntegerValue(indexSettings.get("throttle_size"), bulkSize * 5);
+            
+            backoffMin = XContentMapValues.nodeIntegerValue(indexSettings.get("backoff_min"), DEFAULT_BACKOFF_MIN);
+            backoffMax = XContentMapValues.nodeIntegerValue(indexSettings.get("backoff_max"), DEFAULT_BACKOFF_MAX);
         } else {
-            indexName = couchDb;
-            typeName = couchDb;
+            indexName = DEFAULT_INDEX_NAME;
+            typeName = DEFAULT_TYPE_NAME;
             bulkSize = 100;
-            bulkTimeout = TimeValue.timeValueMillis(10);
-            throttleSize = bulkSize * 5;
+            
+            backoffMin = DEFAULT_BACKOFF_MIN;
+            backoffMax = DEFAULT_BACKOFF_MAX;
         }
-        if (throttleSize == -1) {
-            stream = new LinkedTransferQueue<String>();
-        } else {
-            stream = new ArrayBlockingQueue<String>(throttleSize);
-        }
+        
+        backoff = backoffMin;
     }
 
     @Override
     public void start() {
-        logger.info("starting couchdb stream: host [{}], port [{}], filter [{}], db [{}], indexing to [{}]/[{}]", couchHost, couchPort, couchFilter, couchDb, indexName, typeName);
+        logger.info("starting sofa river: host [{}], port [{}], db filter [{}], indexing to [{}]/[{}]", couchHost, couchPort, couchDbFilter, indexName, typeName);
         try {
             client.admin().indices().prepareCreate(indexName).execute().actionGet();
         } catch (Exception e) {
@@ -189,9 +170,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             }
         }
 
-        slurperThread = EsExecutors.daemonThreadFactory(settings.globalSettings(), "couchdb_river_slurper").newThread(new Slurper());
-        indexerThread = EsExecutors.daemonThreadFactory(settings.globalSettings(), "couchdb_river_indexer").newThread(new Indexer());
-        indexerThread.start();
+        slurperThread = EsExecutors.daemonThreadFactory(settings.globalSettings(), "sofa_river_slurper").newThread(new Slurper());
         slurperThread.start();
     }
 
@@ -200,324 +179,318 @@ public class SofaRiver extends AbstractRiverComponent implements River {
         if (closed) {
             return;
         }
-        logger.info("closing couchdb stream river");
-        slurperThread.interrupt();
-        indexerThread.interrupt();
+        logger.info("closing sofa stream river");
         closed = true;
+        slurperThread.interrupt();
     }
 
-    @SuppressWarnings({"unchecked"})
-    private Object processLine(String s, BulkRequestBuilder bulk) {
-        Map<String, Object> ctx;
-        try {
-            ctx = XContentFactory.xContent(XContentType.JSON).createParser(s).mapAndClose();
-        } catch (IOException e) {
-            logger.warn("failed to parse {}", e, s);
-            return null;
-        }
-        if (ctx.containsKey("error")) {
-            logger.warn("received error {}", s);
-            return null;
-        }
-        Object seq = ctx.get("seq");
-        String id = ctx.get("id").toString();
+    private class Slurper implements Runnable {
+    	
+    	private CouchdbClient couchClient;
+    	
+    	/**
+    	 * Get a unique id for a database
+    	 * 
+    	 * We need to do this in-case a database is deleted and re-created with the same name. We
+    	 * use a _local couch document so that replication will not duplicate the id which could confuse
+    	 * the indexer.
+    	 * 
+    	 * @return The id or null if an error occured
+    	 */
+    	private String getDatabaseId(String dbname) throws CouchdbException {
+    		
+    		final String path = "/" + dbname + "/_local/es-sofa-river";
+    		final String key = "index";
+    		
+    		String dbId;
+    		
+    		try {
+    			Map<String, Object> doc = couchClient.getDocument(path);
+    			dbId = (String) doc.get(key);
+    		} catch (CouchdbExceptionNotFound e) {
+    			// A 404 indicates we need to set the id on this database
+    			dbId = dbname + "_" + UUID.randomUUID().toString();
+    			
+    			logger.info("No id document found for " + dbname + ". Creating " + dbId);
+    			String doc = "{\"" + key + "\": \"" + dbId + "\"}";
+    			
+    			couchClient.createDocument(path, doc);
+    		}
+    		
+    		return dbId;
+    	}
+    	
+    	private class IndexException extends Exception {
+			private static final long serialVersionUID = 1L;
+    	}
+    	
+    	/**
+    	 * Get the indexed seq of this database according to es
+    	 * 
+    	 * @return A seq string or null
+    	 */
+		private String getIndexSeq(final String dbId) throws IndexException {
+    		
+    		String lastSeq = null;
+    		GetResponse lastSeqGetResponse = null;
+    		
+			// Otherwise get the seq from the index
+    		try {
+				client.admin().indices().prepareRefresh(riverIndexName).execute().actionGet();
+				lastSeqGetResponse = client.prepareGet(riverIndexName, riverName().name(), "_seq_" + dbId).execute().actionGet();
+    		} catch (IndexMissingException e) {
+    			throw new IndexException();
+    		} catch (NoShardAvailableActionException e) {
+    			throw new IndexException();
+    		}
+    		
+			if (lastSeqGetResponse.exists()) {
+				Map<String, Object> couchdbState = (Map<String, Object>) lastSeqGetResponse.sourceAsMap();
+                
+                if (couchdbState != null) {
+                    lastSeq = couchdbState.get("last_seq").toString(); // we know its always a string
+                }
+            }
+    		
+    		return lastSeq;
+    	}
+    	
+		/**
+		 * Should we index this database name
+		 */
+    	private boolean isDatabaseIndexed(final String name) {
+    		if (couchDbFilter == null) {
+    			return true;
+    		}
+    		
+    		Matcher matcher = couchDbFilter.matcher(name);
+    		return matcher.matches();
+    	}
+    	
+    	/**
+    	 * Attempt to index a chunk of changes from the given db
+    	 * 
+    	 * @return {@link Boolean} If any changes were indexed
+    	 */
+    	@SuppressWarnings("unchecked")
+		private boolean indexDatabase(final String name) {
+    		
+    		if (!isDatabaseIndexed(name)) {
+    			return false;
+    		}
+    		
+    		final String dbId;
+        	try {
+        		dbId = getDatabaseId(name);
+        	} catch (CouchdbException e) {
+        		logger.warn("Failed to get id for database ", name);
+        		return false;
+        	}
+        	
+        	final String lastSeq;
+        	try {
+        		lastSeq = getIndexSeq(dbId);
+        	} catch (IndexException e) {
+        		logger.error("Failed to get seq for db " + name);
+        		return false;
+        	}
+        	logger.trace("Last seq for db " + name + ": " + lastSeq);
+        	String path = "/" + name + "/_changes?include_docs=true&limit=" + bulkSize;
 
-        // Ignore design documents
-        if (id.startsWith("_design/")) {
-            if (logger.isTraceEnabled()) {
-                logger.trace("ignoring design document {}", id);
+            if (lastSeq != null) {
+                try {
+                    path = path + "&since=" + URLEncoder.encode(lastSeq, "UTF-8");
+                } catch (UnsupportedEncodingException e) {
+                    // should not happen, but in any case...
+                	path = path + "&since=" + lastSeq;
+                }
+            }
+            
+            Map<String, Object> changes;
+            try {
+            	changes = couchClient.getDocument(path);
+            } catch (CouchdbException e) {
+            	logger.warn("Failed to read changes for database ", name);
+            	return false;
+            }
+            
+            List<Map<String, Object>> results = (List<Map<String, Object>>) changes.get("results");
+            if (results.size() == 0) {
+            	return false;
+            }
+            
+            // Prepare to update the index
+            BulkRequestBuilder bulk = client.prepareBulk();
+            for (Map<String, Object> line : results) {
+            	processLine(line, bulk);
+            }
+            
+            // Write the new last_seq to the database seq doc
+            final String newLastSeq = changes.get("last_seq").toString();
+            try {
+                bulk.add(indexRequest(riverIndexName).type(riverName.name()).id("_seq_" + dbId)
+                        .source(jsonBuilder().startObject().field("last_seq", newLastSeq).endObject()));
+            } catch (IOException e) {
+                logger.warn("failed to add last_seq entry to bulk indexing");
+                return false;
+            }
+
+            try {
+                BulkResponse response = bulk.execute().actionGet();
+                if (response.hasFailures()) {
+                    // TODO write to exception queue?
+                	// Failures here still count as stuff getting indexed
+                    logger.warn("failed to execute" + response.buildFailureMessage());
+                    
+                    return true;
+                }
+            } catch (Exception e) {
+                logger.warn("failed to execute bulk", e);
+                return false;
+            }
+            
+            return true;
+    	}
+    	
+        @Override
+        public void run() {
+
+        	couchClient = new CouchdbClient(couchProtocol, couchHost, couchPort, basicAuth, noVerify);
+        	
+            while (true) {
+                if (closed) {
+                    return;
+                }
+
+                Collection<String> dbs;
+                
+                // Get all database names
+                try {
+                	dbs = couchClient.getAllDbs();
+                } catch (CouchdbException e) {
+                	
+                	logger.warn("failed to read from _all_dbs, throttling....", e);
+                    try {
+                        Thread.sleep(5000);
+                    } catch (InterruptedException e1) {
+                        if (closed) {
+                            return;
+                        }
+                    }
+                    continue;
+                }
+                
+                // Iterate through the dbs, checking the seq
+                boolean hasChanges = false;
+                
+                for (final String db : dbs) {
+                	if (closed) {
+                        return;
+                    }
+
+                	hasChanges |= indexDatabase(db);
+                }
+                
+                // If no indexes had changes then sleep for backoff
+                if (!hasChanges) {
+                	logger.info("No changes. Sleep for " + backoff);
+                	try {
+                		Thread.sleep(backoff);
+                	} catch (InterruptedException e1) {
+                		// Loop and return
+                	}
+                	
+                	// Exponentially backoff up to the maxuimum
+                	backoff = Math.min(backoffMax, backoff * 2);
+                } else {
+                	// If changes then reset the backoff
+                	backoff = backoffMin;
+                }
+            }
+        }
+        
+        @SuppressWarnings({"unchecked"})
+        private Object processLine(Map<String, Object> ctx, BulkRequestBuilder bulk) {
+            
+            Object seq = ctx.get("seq");
+            String id = ctx.get("id").toString();
+
+            // Ignore design documents
+            if (id.startsWith("_design/")) {
+                if (logger.isTraceEnabled()) {
+                    logger.trace("ignoring design document {}", id);
+                }
+                return seq;
+            }
+
+            if (script != null) {
+                script.setNextVar("ctx", ctx);
+                try {
+                    script.run();
+                    // we need to unwrap the ctx...
+                    ctx = (Map<String, Object>) script.unwrap(ctx);
+                } catch (Exception e) {
+                    logger.warn("failed to script process {}, ignoring", e, ctx);
+                    return seq;
+                }
+            }
+
+            if (ctx.containsKey("ignore") && ctx.get("ignore").equals(Boolean.TRUE)) {
+                // ignore dock
+            } else if (ctx.containsKey("deleted") && ctx.get("deleted").equals(Boolean.TRUE)) {
+                String index = extractIndex(ctx);
+                String type = extractType(ctx);
+                if (logger.isTraceEnabled()) {
+                    logger.trace("processing [delete]: [{}]/[{}]/[{}]", index, type, id);
+                }
+                bulk.add(deleteRequest(index).type(type).id(id).routing(extractRouting(ctx)).parent(extractParent(ctx)));
+            } else if (ctx.containsKey("doc")) {
+                String index = extractIndex(ctx);
+                String type = extractType(ctx);
+                Map<String, Object> doc = (Map<String, Object>) ctx.get("doc");
+
+                // Remove _attachment from doc if needed
+                if (couchIgnoreAttachments) {
+                    // no need to log that we removed it, the doc indexed will be shown without it
+                    doc.remove("_attachments");
+                } else {
+                    // TODO by now, couchDB river does not really store attachments but only attachments meta infomration
+                    // So we perhaps need to fully support attachments
+                }
+
+                if (logger.isTraceEnabled()) {
+                    logger.trace("processing [index ]: [{}]/[{}]/[{}], source {}", index, type, id, doc);
+                }
+
+                bulk.add(indexRequest(index).type(type).id(id).source(doc).routing(extractRouting(ctx)).parent(extractParent(ctx)));
+            } else {
+                logger.warn("ignoring unknown change");
             }
             return seq;
         }
 
-        if (script != null) {
-            script.setNextVar("ctx", ctx);
-            try {
-                script.run();
-                // we need to unwrap the ctx...
-                ctx = (Map<String, Object>) script.unwrap(ctx);
-            } catch (Exception e) {
-                logger.warn("failed to script process {}, ignoring", e, ctx);
-                return seq;
-            }
+        private String extractParent(Map<String, Object> ctx) {
+            return (String) ctx.get("_parent");
         }
 
-        if (ctx.containsKey("ignore") && ctx.get("ignore").equals(Boolean.TRUE)) {
-            // ignore dock
-        } else if (ctx.containsKey("deleted") && ctx.get("deleted").equals(Boolean.TRUE)) {
-            String index = extractIndex(ctx);
-            String type = extractType(ctx);
-            if (logger.isTraceEnabled()) {
-                logger.trace("processing [delete]: [{}]/[{}]/[{}]", index, type, id);
-            }
-            bulk.add(deleteRequest(index).type(type).id(id).routing(extractRouting(ctx)).parent(extractParent(ctx)));
-        } else if (ctx.containsKey("doc")) {
-            String index = extractIndex(ctx);
-            String type = extractType(ctx);
-            Map<String, Object> doc = (Map<String, Object>) ctx.get("doc");
-
-            // Remove _attachment from doc if needed
-            if (couchIgnoreAttachments) {
-                // no need to log that we removed it, the doc indexed will be shown without it
-                doc.remove("_attachments");
-            } else {
-                // TODO by now, couchDB river does not really store attachments but only attachments meta infomration
-                // So we perhaps need to fully support attachments
-            }
-
-            if (logger.isTraceEnabled()) {
-                logger.trace("processing [index ]: [{}]/[{}]/[{}], source {}", index, type, id, doc);
-            }
-
-            bulk.add(indexRequest(index).type(type).id(id).source(doc).routing(extractRouting(ctx)).parent(extractParent(ctx)));
-        } else {
-            logger.warn("ignoring unknown change {}", s);
+        private String extractRouting(Map<String, Object> ctx) {
+            return (String) ctx.get("_routing");
         }
-        return seq;
-    }
 
-    private String extractParent(Map<String, Object> ctx) {
-        return (String) ctx.get("_parent");
-    }
-
-    private String extractRouting(Map<String, Object> ctx) {
-        return (String) ctx.get("_routing");
-    }
-
-    private String extractType(Map<String, Object> ctx) {
-        String type = (String) ctx.get("_type");
-        if (type == null) {
-            type = typeName;
-        }
-        return type;
-    }
-
-    private String extractIndex(Map<String, Object> ctx) {
-        String index = (String) ctx.get("_index");
-        if (index == null) {
-            index = indexName;
-        }
-        return index;
-    }
-
-    private class Indexer implements Runnable {
-        @Override
-        public void run() {
-            while (true) {
-                if (closed) {
-                    return;
-                }
-                String s;
-                try {
-                    s = stream.take();
-                } catch (InterruptedException e) {
-                    if (closed) {
-                        return;
-                    }
-                    continue;
-                }
-                BulkRequestBuilder bulk = client.prepareBulk();
-                Object lastSeq = null;
-                Object lineSeq = processLine(s, bulk);
-                if (lineSeq != null) {
-                    lastSeq = lineSeq;
-                }
-
-                // spin a bit to see if we can get some more changes
-                try {
-                    while ((s = stream.poll(bulkTimeout.millis(), TimeUnit.MILLISECONDS)) != null) {
-                        lineSeq = processLine(s, bulk);
-                        if (lineSeq != null) {
-                            lastSeq = lineSeq;
-                        }
-
-                        if (bulk.numberOfActions() >= bulkSize) {
-                            break;
-                        }
-                    }
-                } catch (InterruptedException e) {
-                    if (closed) {
-                        return;
-                    }
-                }
-
-                if (lastSeq != null) {
-                    try {
-                        // we always store it as a string
-                        String lastSeqAsString = null;
-                        if (lastSeq instanceof List) {
-                            // bigcouch uses array for the seq
-                            try {
-                                XContentBuilder builder = XContentFactory.jsonBuilder();
-                                //builder.startObject();
-                                builder.startArray();
-                                for (Object value : ((List) lastSeq)) {
-                                    builder.value(value);
-                                }
-                                builder.endArray();
-                                //builder.endObject();
-                                lastSeqAsString = builder.string();
-                            } catch (Exception e) {
-                                logger.error("failed to convert last_seq to a json string", e);
-                            }
-                        } else {
-                            lastSeqAsString = lastSeq.toString();
-                        }
-                        if (logger.isTraceEnabled()) {
-                            logger.trace("processing [_seq  ]: [{}]/[{}]/[{}], last_seq [{}]", riverIndexName, riverName.name(), "_seq", lastSeqAsString);
-                        }
-                        bulk.add(indexRequest(riverIndexName).type(riverName.name()).id("_seq")
-                                .source(jsonBuilder().startObject().startObject("couchdb").field("last_seq", lastSeqAsString).endObject().endObject()));
-                    } catch (IOException e) {
-                        logger.warn("failed to add last_seq entry to bulk indexing");
-                    }
-                }
-
-                try {
-                    BulkResponse response = bulk.execute().actionGet();
-                    if (response.hasFailures()) {
-                        // TODO write to exception queue?
-                        logger.warn("failed to execute" + response.buildFailureMessage());
-                    }
-                } catch (Exception e) {
-                    logger.warn("failed to execute bulk", e);
-                }
+        private String extractType(Map<String, Object> ctx) {
+            String type = (String) ctx.get("_type");
+            if (type == null) {
+                type = typeName;
             }
+            return type;
         }
-    }
 
-
-    private class Slurper implements Runnable {
-        @SuppressWarnings({"unchecked"})
-        @Override
-        public void run() {
-
-            while (true) {
-                if (closed) {
-                    return;
-                }
-
-                String lastSeq = null;
-                try {
-                    client.admin().indices().prepareRefresh(riverIndexName).execute().actionGet();
-                    GetResponse lastSeqGetResponse = client.prepareGet(riverIndexName, riverName().name(), "_seq").execute().actionGet();
-                    if (lastSeqGetResponse.exists()) {
-                        Map<String, Object> couchdbState = (Map<String, Object>) lastSeqGetResponse.sourceAsMap().get("couchdb");
-                        if (couchdbState != null) {
-                            lastSeq = couchdbState.get("last_seq").toString(); // we know its always a string
-                        }
-                    }
-                } catch (Exception e) {
-                    logger.warn("failed to get last_seq, throttling....", e);
-                    try {
-                        Thread.sleep(5000);
-                        continue;
-                    } catch (InterruptedException e1) {
-                        if (closed) {
-                            return;
-                        }
-                    }
-                }
-
-                String file = "/" + couchDb + "/_changes?feed=continuous&include_docs=true&heartbeat=10000";
-                if (couchFilter != null) {
-                    try {
-                        file = file + "&filter=" + URLEncoder.encode(couchFilter, "UTF-8");
-                    } catch (UnsupportedEncodingException e) {
-                        // should not happen!
-                    }
-                    if (couchFilterParamsUrl != null) {
-                        file = file + couchFilterParamsUrl;
-                    }
-                }
-
-                if (lastSeq != null) {
-                    try {
-                        file = file + "&since=" + URLEncoder.encode(lastSeq, "UTF-8");
-                    } catch (UnsupportedEncodingException e) {
-                        // should not happen, but in any case...
-                        file = file + "&since=" + lastSeq;
-                    }
-                }
-
-                if (logger.isDebugEnabled()) {
-                    logger.debug("using host [{}], port [{}], path [{}]", couchHost, couchPort, file);
-                }
-
-                HttpURLConnection connection = null;
-                InputStream is = null;
-                try {
-                    URL url = new URL(couchProtocol, couchHost, couchPort, file);
-                    connection = (HttpURLConnection) url.openConnection();
-                    if (basicAuth != null) {
-                        connection.addRequestProperty("Authorization", basicAuth);
-                    }
-                    connection.setDoInput(true);
-                    connection.setUseCaches(false);
-
-                    if (noVerify) {
-                        ((HttpsURLConnection) connection).setHostnameVerifier(
-                                new HostnameVerifier() {
-                                    public boolean verify(String string, SSLSession ssls) {
-                                        return true;
-                                    }
-                                }
-                        );
-                    }
-
-                    is = connection.getInputStream();
-
-                    final BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        if (closed) {
-                            return;
-                        }
-                        if (line.length() == 0) {
-                            logger.trace("[couchdb] heartbeat");
-                            continue;
-                        }
-                        if (logger.isTraceEnabled()) {
-                            logger.trace("[couchdb] {}", line);
-                        }
-                        // we put here, so we block if there is no space to add
-                        stream.put(line);
-                    }
-                } catch (Exception e) {
-                    Closeables.closeQuietly(is);
-                    if (connection != null) {
-                        try {
-                            connection.disconnect();
-                        } catch (Exception e1) {
-                            // ignore
-                        } finally {
-                            connection = null;
-                        }
-                    }
-                    if (closed) {
-                        return;
-                    }
-                    logger.warn("failed to read from _changes, throttling....", e);
-                    try {
-                        Thread.sleep(5000);
-                    } catch (InterruptedException e1) {
-                        if (closed) {
-                            return;
-                        }
-                    }
-                } finally {
-                    Closeables.closeQuietly(is);
-                    if (connection != null) {
-                        try {
-                            connection.disconnect();
-                        } catch (Exception e1) {
-                            // ignore
-                        } finally {
-                            connection = null;
-                        }
-                    }
-                }
+        private String extractIndex(Map<String, Object> ctx) {
+            String index = (String) ctx.get("_index");
+            if (index == null) {
+                index = indexName;
             }
+            return index;
         }
     }
 }

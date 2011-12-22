@@ -19,7 +19,10 @@
 
 package org.elasticsearch.river.couchdb;
 
+import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.common.settings.ImmutableSettings;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.node.NodeBuilder;
 
@@ -33,8 +36,23 @@ public class SofaRiverTest {
     public static void main(String[] args) throws Exception {
         Node node = NodeBuilder.nodeBuilder().settings(ImmutableSettings.settingsBuilder().put("gateway.type", "local")).node();
         Thread.sleep(1000);
-        node.client().prepareIndex("_river", "db", "_meta").setSource(jsonBuilder().startObject().field("type", "sofa").endObject()).execute().actionGet();
 
+        try {
+            node.client().admin().indices().delete(new DeleteIndexRequest("_river")).actionGet();
+        } catch (IndexMissingException e) {
+            // Index does not exist... Fine
+        }
+        Thread.sleep(1000);
+        
+        XContentBuilder xb = jsonBuilder()
+			.startObject()
+			.field("type", "sofa")
+			.startObject("couchdb")
+			.field("db_filter", "fp3_nodes.*")
+			.endObject()
+			.endObject();
+        node.client().prepareIndex("_river", "db", "_meta").setSource(xb).execute().actionGet();
+        
         Thread.sleep(1000000);
     }
 }
