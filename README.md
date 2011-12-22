@@ -16,9 +16,7 @@ The Sofa river polls the CouchDB `_all_dbs` endpoint and then loops through all 
 Installation
 ------------
 
-FIXME
-
-In order to install the plugin, simply run: `bin/plugin -install elasticsearch/elasticsearch-river-couchdb/1.0.0`.
+In order to install the plugin, simply run: `bin/plugin -install adamlofts/elasticsearch-river-sofa/0.0.3`.
 
 Configuration
 -------------
