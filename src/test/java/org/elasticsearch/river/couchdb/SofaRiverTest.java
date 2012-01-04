@@ -49,6 +49,7 @@ public class SofaRiverTest {
 			.field("type", "sofa")
 			.startObject("couchdb")
 			.field("db_filter", "fp3_nodes.*")
+			.field("script", "ctx.type = 'node';")
 			.endObject()
 			.endObject();
         node.client().prepareIndex("_river", "db", "_meta").setSource(xb).execute().actionGet();
