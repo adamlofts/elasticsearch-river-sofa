@@ -322,7 +322,11 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             // Prepare to update the index
             BulkRequestBuilder bulk = client.prepareBulk();
             for (Map<String, Object> line : results) {
-            	processLine(line, bulk);
+            	try {
+            		processLine(line, bulk);
+            	} catch (Exception e) {
+            		logger.error("Failed to index line. SKIPPING. ", e);
+            	}
             }
             
             // Write the new last_seq to the database seq doc
