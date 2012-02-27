@@ -94,15 +94,9 @@ public class CouchdbClient {
             throw new CouchdbException();
         } finally {
             Closeables.closeQuietly(is);
-            if (connection != null) {
-                try {
-                    connection.disconnect();
-                } catch (Exception e1) {
-                    // ignore
-                } finally {
-                    connection = null;
-                }
-            }
+            
+            // We do not call disconnect() on the connection because we want java to use keep-alive on the underlying
+            // socket connection.
         }
         
         return doc;
