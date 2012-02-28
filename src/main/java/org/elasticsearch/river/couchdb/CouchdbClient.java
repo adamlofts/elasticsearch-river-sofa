@@ -136,17 +136,14 @@ public class CouchdbClient {
             os = connection.getOutputStream();
             
             final BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
-            try {
-            	writer.write(body);
-            	writer.flush();
-            	
-            	is = connection.getInputStream();
-            	
-            	final BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
-            	doc = XContentFactory.xContent(XContentType.JSON).createParser(reader).mapAndClose();
-            } catch (IOException e) {
-                throw new CouchdbException();
-            }
+        	writer.write(body);
+        	writer.flush();
+        	
+        	is = connection.getInputStream();
+        	
+        	final BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+        	doc = XContentFactory.xContent(XContentType.JSON).createParser(reader).mapAndClose();
+
         } catch (Exception e) {
             throw new CouchdbException();
         } finally {
@@ -201,12 +198,12 @@ public class CouchdbClient {
             	}
             	names.add(name.substring(1, name.length() - 1));
             }
-
+            
             // Read the rest of the input stream. This is so the HttpURLConnection can use keep-alive on the connection
             while (reader.readLine() != null) {
             	// Do nothing
             }
-
+            
         } catch (FileNotFoundException e) {
         	throw new CouchdbExceptionNotFound();
         } catch (Exception e) {
