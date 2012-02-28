@@ -201,6 +201,12 @@ public class CouchdbClient {
             	}
             	names.add(name.substring(1, name.length() - 1));
             }
+
+            // Read the rest of the input stream. This is so the HttpURLConnection can use keep-alive on the connection
+            while (reader.readLine() != null) {
+            	// Do nothing
+            }
+
         } catch (FileNotFoundException e) {
         	throw new CouchdbExceptionNotFound();
         } catch (Exception e) {
