@@ -40,3 +40,11 @@ The following will index all CouchDB databases prefixed with `test` into the `my
         }
     }'
 
+Development
+-------------
+
+To build the plugin from source type `mvn assembly:single`.
+
+
+
+
