@@ -155,7 +155,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
 
     @Override
     public void start() {
-        logger.info("starting sofa river: host [{}], port [{}], db filter [{}], indexing to [{}]/[{}]", couchHost, couchPort, couchDbFilter, indexName, typeName);
+        logger.info("starting sofa river [{}]: host [{}], port [{}], db filter [{}], indexing to [{}]/[{}]", SofaRiver.class.getPackage().getImplementationVersion(), couchHost, couchPort, couchDbFilter, indexName, typeName);
         try {
             client.admin().indices().prepareCreate(indexName).execute().actionGet();
         } catch (Exception e) {
