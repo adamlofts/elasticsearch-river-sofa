@@ -18,11 +18,6 @@
             <distribution>repo</distribution>
         </license>
     </licenses>
-    <scm>
-        <connection>scm:git:git@github.com:elasticsearch/elasticsearch-river-couchdb.git</connection>
-        <developerConnection>scm:git:git@github.com:elasticsearch/elasticsearch-river-couchdb.git</developerConnection>
-        <url>http://github.com/elasticsearch/elasticsearch-river-couchdb</url>
-    </scm>
 
     <parent>
         <groupId>org.sonatype.oss</groupId>

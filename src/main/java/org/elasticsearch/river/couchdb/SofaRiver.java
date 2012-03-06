@@ -19,6 +19,7 @@
 
 package org.elasticsearch.river.couchdb;
 
+import org.elasticsearch.ElasticSearchInterruptedException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.NoShardAvailableActionException;
 import org.elasticsearch.action.bulk.BulkResponse;
@@ -241,6 +242,8 @@ public class SofaRiver extends AbstractRiverComponent implements River {
     		} catch (IndexMissingException e) {
     			throw new IndexException();
     		} catch (NoShardAvailableActionException e) {
+    			throw new IndexException();
+    		} catch (ElasticSearchInterruptedException e) {
     			throw new IndexException();
     		}
     		
