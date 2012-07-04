@@ -40,6 +40,7 @@ import org.elasticsearch.script.ScriptService;
 
 import java.io.*;
 import java.net.URLEncoder;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -270,6 +271,16 @@ public class SofaRiver extends AbstractRiverComponent implements River {
     		return matcher.matches();
     	}
     	
+    	private String decodeDatabaseSeq(Object obj) {
+    		if (obj.getClass().equals(ArrayList.class)) {
+    			// BigCouch
+    			@SuppressWarnings("unchecked")
+				ArrayList<Object> list = (ArrayList<Object>) obj;
+    			return list.get(1).toString();
+    		}
+    		return obj.toString();
+    	}
+    	
     	/**
     	 * Attempt to index a chunk of changes from the given db
     	 * 
@@ -333,7 +344,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             }
             
             // Write the new last_seq to the database seq doc
-            final String newLastSeq = changes.get("last_seq").toString();
+            final String newLastSeq = decodeDatabaseSeq(changes.get("last_seq"));
             try {
                 bulk.add(indexRequest(riverIndexName).type(riverName.name()).id("_seq_" + dbId)
                         .source(jsonBuilder().startObject().field("last_seq", newLastSeq).endObject()));
