@@ -110,6 +110,7 @@
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-parsers</artifactId>
             <version>1.2</version>
+            <scope>compile</scope>
 		</dependency>
 
     </dependencies>
@@ -165,9 +166,12 @@
                 <configuration>
                     <appendAssemblyId>false</appendAssemblyId>
                     <outputDirectory>${project.build.directory}/releases/</outputDirectory>
-                    <descriptors>
+                   <descriptors>
                         <descriptor>${basedir}/src/main/assemblies/plugin.xml</descriptor>
                     </descriptors>
+<descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+          </descriptorRefs>
                 </configuration>
                 <executions>
                     <execution>
