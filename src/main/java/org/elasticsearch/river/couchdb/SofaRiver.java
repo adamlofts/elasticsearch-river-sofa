@@ -297,7 +297,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
         	try {
         		dbId = getDatabaseId(name);
         	} catch (CouchdbException e) {
-        		logger.warn("Failed to get id for database ", name);
+        		logger.warn("Failed to get id for database {}", name);
         		return false;
         	}
         	
@@ -324,7 +324,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             try {
             	changes = couchClient.getDocument(path);
             } catch (CouchdbException e) {
-            	logger.warn("Failed to read changes for database ", name);
+            	logger.warn("Failed to read changes for database {}", name);
             	return false;
             }
             
@@ -345,7 +345,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             	// Pass
             }
             if (site_doc == null) {
-            	logger.error("Failed to get site doc for database ", name);
+            	logger.error("Failed to get site doc for database {}", name);
             	return false;
             }
             
