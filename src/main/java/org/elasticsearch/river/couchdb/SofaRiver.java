@@ -333,9 +333,29 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             	return false;
             }
             
+            // Get the site doc
+            Object site_doc = null;
+            try {
+            	Map<String, Object> response = couchClient.getDocument("/" + name + "/_design/sites1/_view/site_doc?include_docs=true");
+            	List<Map<String, Object>> rows = (List<Map<String, Object>>) response.get("rows");
+            	if (rows.size() > 0) {
+            		site_doc = rows.get(0).get("doc");
+            	}
+            } catch (CouchdbException e) {
+            	// Pass
+            }
+            if (site_doc == null) {
+            	logger.error("Failed to get site doc for database ", name);
+            	return false;
+            }
+            
             // Prepare to update the index
             BulkRequestBuilder bulk = client.prepareBulk();
             for (Map<String, Object> line : results) {
+            	
+            	// Add in the site doc to the context
+            	line.put("site", site_doc);
+
             	try {
             		processLine(line, bulk);
             	} catch (Exception e) {
