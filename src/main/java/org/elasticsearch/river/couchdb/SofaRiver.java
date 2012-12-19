@@ -19,6 +19,8 @@
 
 package org.elasticsearch.river.couchdb;
 
+import org.apache.tika.parser.Parser;
+import org.apache.tika.parser.ParsingReader;
 import org.elasticsearch.ElasticSearchInterruptedException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.NoShardAvailableActionException;
@@ -30,6 +32,7 @@ import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.common.Base64;
 import org.elasticsearch.common.collect.Maps;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.io.Closeables;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.common.xcontent.support.XContentMapValues;
 import org.elasticsearch.indices.IndexAlreadyExistsException;
@@ -40,6 +43,7 @@ import org.elasticsearch.script.ScriptService;
 
 import java.io.*;
 import java.net.URLEncoder;
+import java.nio.CharBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -359,7 +363,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             	line.put("site", site_doc);
 
             	try {
-            		processLine(line, bulk);
+            		processLine(name, line, bulk);
             	} catch (Exception e) {
             		logger.error("Failed to index line. SKIPPING. ", e);
             	}
@@ -450,8 +454,8 @@ public class SofaRiver extends AbstractRiverComponent implements River {
         }
         
         @SuppressWarnings({"unchecked"})
-        private Object processLine(Map<String, Object> ctx, BulkRequestBuilder bulk) {
-            
+        private Object processLine(final String dbname, Map<String, Object> ctx, BulkRequestBuilder bulk) {
+
             Object seq = ctx.get("seq");
             String id = ctx.get("id").toString();
 
@@ -488,9 +492,18 @@ public class SofaRiver extends AbstractRiverComponent implements River {
                 String index = extractIndex(ctx);
                 String type = extractType(ctx);
                 Map<String, Object> doc = (Map<String, Object>) ctx.get("doc");
-
                 if (logger.isTraceEnabled()) {
                     logger.trace("processing [index ]: [{}]/[{}]/[{}], source {}", index, type, id, doc);
+                }
+                
+                try {
+                	extractAttachment(dbname, id, doc);
+                } catch (IOException ex) {
+                	logger.error("IOException indexing attachments docid={}", id);
+                	logger.error("Was:", ex);
+                } catch (CouchdbException ex) {
+                	logger.error("CouchdbException indexing attachments docid={}", id);
+                	logger.error("Was:", ex);
                 }
 
                 bulk.add(indexRequest(index).type(type).id(id).source(doc).routing(extractRouting(ctx)).parent(extractParent(ctx)));
@@ -522,6 +535,46 @@ public class SofaRiver extends AbstractRiverComponent implements River {
                 index = indexName;
             }
             return index;
+        }
+        
+        private void extractAttachment(final String dbname, final String doc_id, Map<String, Object> doc) throws IOException, CouchdbException {
+        	
+        	// Index the first attachment
+        	
+            @SuppressWarnings("unchecked")
+			Map<String, Object> attachments = (Map<String, Object>) doc.get("_attachments");
+            if (attachments == null) {
+            	return;
+            }
+            
+            String attachment_name = null;
+            for (String it : attachments.keySet()) {
+            	attachment_name = it;
+            	break;
+            }
+            if (attachment_name == null) {
+            	return;
+            }
+            
+            InputStream is = null;
+            ParsingReader reader = null;
+            CharBuffer buffer = CharBuffer.allocate(1024 * 512);
+            try {
+            	is = couchClient.getAttachment("/" + dbname + "/" + doc_id + "/" + attachment_name);
+            	reader = new ParsingReader(is);
+            	
+            	while (reader.read(buffer) != -1) {
+            		// Continue reading
+            	}
+            } finally {
+            	Closeables.closeQuietly(is);
+            	Closeables.closeQuietly(reader);
+            }
+            
+            buffer.flip();
+            String text = buffer.toString();
+            logger.info("Tika dbname={} doc_id={} attachment_name={} text_length={}", dbname, doc_id, attachment_name, text.length());
+            doc.put("tika", text);
         }
     }
 }

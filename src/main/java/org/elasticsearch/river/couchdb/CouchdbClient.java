@@ -102,6 +102,41 @@ public class CouchdbClient {
         return doc;
     }
     
+    public InputStream getAttachment(final String path) throws CouchdbException {
+
+		HttpURLConnection connection = null;
+        InputStream is = null;
+        
+        try {
+            URL url = new URL(couchProtocol, couchHost, couchPort, path);
+            connection = (HttpURLConnection) url.openConnection();
+            if (basicAuth != null) {
+                connection.addRequestProperty("Authorization", basicAuth);
+            }
+            connection.setDoInput(true);
+            connection.setUseCaches(false);
+
+            if (noVerify) {
+                ((HttpsURLConnection) connection).setHostnameVerifier(
+                        new HostnameVerifier() {
+                            public boolean verify(String string, SSLSession ssls) {
+                                return true;
+                            }
+                        }
+                );
+            }
+
+            is = connection.getInputStream();
+            
+        } catch (FileNotFoundException e) {
+        	throw new CouchdbExceptionNotFound();
+        } catch (Exception e) {
+            throw new CouchdbException();
+        }
+        
+        return is;
+    }
+    
     public Map<String, Object> createDocument(final String path, final String body) throws CouchdbException {
 
 		HttpURLConnection connection = null;
