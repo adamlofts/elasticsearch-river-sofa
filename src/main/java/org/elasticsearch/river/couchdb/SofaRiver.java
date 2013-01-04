@@ -557,6 +557,8 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             	return;
             }
             
+            logger.info("Tika dbname={} doc_id={} attachment_name={}", dbname, doc_id, attachment_name);
+
             InputStream is = null;
             ParsingReader reader = null;
             CharBuffer buffer = CharBuffer.allocate(1024 * 512);
@@ -565,8 +567,8 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             	is = couchClient.getAttachment("/" + dbname + "/" + doc_id + "/" + attachment_name);
             	reader = new ParsingReader(is);
             	
-            	while (reader.read(buffer) != -1) {
-            		// Continue reading
+            	while ((reader.read(buffer) != -1) && buffer.hasRemaining()) {
+            		// Continue reading until either the reader finishes or the buffer is full.
             	}
             } finally {
             	Closeables.closeQuietly(is);
@@ -575,7 +577,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             
             buffer.flip();
             String text = buffer.toString();
-            logger.info("Tika dbname={} doc_id={} attachment_name={} text_length={}", dbname, doc_id, attachment_name, text.length());
+            logger.info("Finished Tika text_length={}", text.length());
             doc.put("tika", text);
         }
     }
