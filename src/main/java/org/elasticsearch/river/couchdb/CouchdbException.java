@@ -24,5 +24,10 @@ public class CouchdbException extends Exception {
 	private static final long serialVersionUID = 1L;
 
 	public CouchdbException() {
+		
+	}
+
+	public CouchdbException(String message) {
+		super(message);
     }
 }

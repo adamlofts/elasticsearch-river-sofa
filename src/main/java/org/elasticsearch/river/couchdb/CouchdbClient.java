@@ -131,7 +131,7 @@ public class CouchdbClient {
         } catch (FileNotFoundException e) {
         	throw new CouchdbExceptionNotFound();
         } catch (Exception e) {
-            throw new CouchdbException();
+            throw new CouchdbException(path + "\n" + e.toString());
         }
         
         return is;

@@ -19,7 +19,6 @@
 
 package org.elasticsearch.river.couchdb;
 
-import org.apache.tika.parser.Parser;
 import org.apache.tika.parser.ParsingReader;
 import org.elasticsearch.ElasticSearchInterruptedException;
 import org.elasticsearch.ExceptionsHelper;
@@ -496,14 +495,16 @@ public class SofaRiver extends AbstractRiverComponent implements River {
                     logger.trace("processing [index ]: [{}]/[{}]/[{}], source {}", index, type, id, doc);
                 }
                 
-                try {
-                	extractAttachment(dbname, id, doc);
-                } catch (IOException ex) {
-                	logger.error("IOException indexing attachments docid={}", id);
-                	logger.error("Was:", ex);
-                } catch (CouchdbException ex) {
-                	logger.error("CouchdbException indexing attachments docid={}", id);
-                	logger.error("Was:", ex);
+                if (type.equals("attachment")) {
+	                try {
+	                	extractAttachment(dbname, id, doc);
+	                } catch (IOException ex) {
+	                	logger.error("IOException indexing attachments docid={}", id);
+	                	logger.error("Was:", ex);
+	                } catch (CouchdbException ex) {
+	                	logger.error("CouchdbException indexing attachments docid={}", id);
+	                	logger.error("Was:", ex);
+	                }
                 }
 
                 bulk.add(indexRequest(index).type(type).id(id).source(doc).routing(extractRouting(ctx)).parent(extractParent(ctx)));
