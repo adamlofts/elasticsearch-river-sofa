@@ -73,7 +73,6 @@ public class SofaRiver extends AbstractRiverComponent implements River {
     private final Pattern couchDbFilter;
     private final String basicAuth;
     private final boolean noVerify;
-    private final boolean couchIgnoreAttachments;
 
     private final String indexName;
     private final String typeName;
@@ -83,6 +82,8 @@ public class SofaRiver extends AbstractRiverComponent implements River {
     private final int backoffMax;
     
     private int backoff;
+    
+    private final String siteDatabase;
 
     private final ExecutableScript script;
 
@@ -103,7 +104,8 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             couchHost = XContentMapValues.nodeStringValue(couchSettings.get("host"), "localhost");
             couchPort = XContentMapValues.nodeIntegerValue(couchSettings.get("port"), 5984);
             
-            couchIgnoreAttachments = XContentMapValues.nodeBooleanValue(couchSettings.get("ignore_attachments"), false);
+            siteDatabase = XContentMapValues.nodeStringValue(couchSettings.get("site_database"), "footprinter_sites");
+            
             if (couchSettings.containsKey("user") && couchSettings.containsKey("password")) {
                 String user = couchSettings.get("user").toString();
                 String password = couchSettings.get("password").toString();
@@ -129,10 +131,10 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             couchHost = "localhost";
             couchPort = 5984;
             couchDbFilter = null;
-            couchIgnoreAttachments = false;
             noVerify = false;
             basicAuth = null;
             script = null;
+            siteDatabase = "footprinter_sites";
         }
 
         if (settings.settings().containsKey("index")) {
@@ -157,7 +159,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
 
     @Override
     public void start() {
-        logger.info("starting sofa river [{}]: host [{}], port [{}], db filter [{}], indexing to [{}]/[{}]", SofaRiver.class.getPackage().getImplementationVersion(), couchHost, couchPort, couchDbFilter, indexName, typeName);
+        logger.info("starting sofa river [{}]: host [{}], port [{}], db filter [{}], site db [{}], indexing to [{}]/[{}]", SofaRiver.class.getPackage().getImplementationVersion(), couchHost, couchPort, couchDbFilter, siteDatabase, indexName, typeName);
         try {
             client.admin().indices().prepareCreate(indexName).execute().actionGet();
         } catch (Exception e) {
@@ -336,7 +338,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             // Get the site doc
             Object site_doc = null;
             try {
-            	Map<String, Object> response = couchClient.getDocument("/" + name + "/_design/sites1/_view/site_doc?include_docs=true");
+            	Map<String, Object> response = couchClient.getDocument("/" + siteDatabase + "/_design/sites1/_view/site_doc_by_couchdb_name?include_docs=true&key=\"" + name + "\"");
             	List<Map<String, Object>> rows = (List<Map<String, Object>>) response.get("rows");
             	if (rows.size() > 0) {
             		site_doc = rows.get(0).get("doc");
@@ -486,15 +488,6 @@ public class SofaRiver extends AbstractRiverComponent implements River {
                 String index = extractIndex(ctx);
                 String type = extractType(ctx);
                 Map<String, Object> doc = (Map<String, Object>) ctx.get("doc");
-
-                // Remove _attachment from doc if needed
-                if (couchIgnoreAttachments) {
-                    // no need to log that we removed it, the doc indexed will be shown without it
-                    doc.remove("_attachments");
-                } else {
-                    // TODO by now, couchDB river does not really store attachments but only attachments meta infomration
-                    // So we perhaps need to fully support attachments
-                }
 
                 if (logger.isTraceEnabled()) {
                     logger.trace("processing [index ]: [{}]/[{}]/[{}], source {}", index, type, id, doc);
