@@ -561,6 +561,7 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             ParsingReader reader = null;
             CharBuffer buffer = CharBuffer.allocate(1024 * 512);
             try {
+            	attachment_name = URLEncoder.encode(attachment_name, "UTF8");
             	is = couchClient.getAttachment("/" + dbname + "/" + doc_id + "/" + attachment_name);
             	reader = new ParsingReader(is);
             	
