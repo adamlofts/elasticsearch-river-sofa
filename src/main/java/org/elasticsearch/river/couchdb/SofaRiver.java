@@ -47,6 +47,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -354,12 +355,25 @@ public class SofaRiver extends AbstractRiverComponent implements River {
             	return false;
             }
             
+            Map<String, Map<String, Object>> descriptors = new LinkedHashMap<String, Map<String, Object>>();
+            try {
+	            // Get the site descriptors. This is so that we can index the tags
+	            Map<String, Object> response = couchClient.getDocument("/" + name + "/_design/descriptor1/_view/by_site_by_group_excl_deleted?include_docs=true");
+	            for (Map<String, Object> row : ((Iterable<Map<String, Object>>) response.get("rows"))) {
+	            	descriptors.put((String) row.get("id"), (Map<String, Object>) row.get("doc"));
+	            }
+            } catch (CouchdbException e) {
+            	logger.error("Failed to get descriptors for database {}", name);
+            	return false;
+            }
+            
             // Prepare to update the index
             BulkRequestBuilder bulk = client.prepareBulk();
             for (Map<String, Object> line : results) {
             	
             	// Add in the site doc to the context
             	line.put("site", site_doc);
+            	line.put("descriptors", descriptors);
 
             	try {
             		processLine(name, line, bulk);
